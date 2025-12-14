@@ -1,0 +1,45 @@
+{
+  "name": "carbonx-avs",
+  "version": "1.0.0",
+  "description": "CarbonX KYC Verification AVS - EigenLayer Actively Validated Service",
+  "main": "operator/index.js",
+  "scripts": {
+    "operator": "ts-node operator/index.ts",
+    "create-task": "ts-node operator/createTask.ts",
+    "build": "tsc",
+    "build:contracts": "cd contracts && forge build",
+    "test:contracts": "cd contracts && forge test -vvv",
+    "deploy:simple": "cd contracts && make deploy-simple",
+    "deploy": "cd contracts && make deploy",
+    "abis": "cd contracts && make abis"
+  },
+  "dependencies": {
+    "axios": "^1.6.0",
+    "dotenv": "^16.4.0",
+    "ethers": "^6.13.2",
+    "express": "^4.18.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.0.0",
+    "ts-node": "^10.9.0",
+    "typescript": "^5.0.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/carbonx-fi/avs.git"
+  },
+  "keywords": [
+    "eigenlayer",
+    "avs",
+    "kyc",
+    "carbon",
+    "blockchain",
+    "mantle"
+  ],
+  "author": "CarbonX",
+  "license": "MIT"
+}
