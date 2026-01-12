@@ -1,37 +1,46 @@
 /**
- * CarbonX KYC Operator Service
+ * CarbonX AVS Operator Service
  *
- * This service listens for KYC verification tasks from the CarbonXServiceManager contract
- * and submits signed responses. For hackathon demo, it uses mock verification
- * (always approves at the requested level).
+ * This service handles two types of verification tasks:
+ * 1. KYC Verification - User identity verification
+ * 2. Project Verification - Carbon project RWA verification
  *
- * Architecture:
- * 1. Listen for KYCTaskCreated events
- * 2. Perform mock KYC verification
- * 3. Upload verification proof to IPFS (mock for hackathon)
- * 4. Sign the verification result
- * 5. Submit response to contract
+ * For hackathon demo, it uses mock verification (always approves).
  *
- * Based on Domalend AVS pattern for EigenLayer integration.
+ * Based on EigenLayer AVS pattern.
  */
 
 import { ethers } from "ethers";
 import * as dotenv from "dotenv";
-import * as fs from "fs";
-import * as path from "path";
 
 dotenv.config();
 
-// Types
+// ============ Types ============
+
 interface KYCTask {
   user: string;
   requiredLevel: number;
   taskCreatedBlock: number;
   status: number;
-  requestId: string;
 }
 
-// KYC Levels
+interface ProjectSubmission {
+  owner: string;
+  name: string;
+  methodology: string;
+  registry: string;
+  registryId: string;
+  location: string;
+  category: number;
+  vintage: number;
+  estimatedCredits: bigint;
+  documentationUri: string;
+  submittedBlock: number;
+  status: number;
+}
+
+// ============ Enums ============
+
 enum KYCLevel {
   NONE = 0,
   BASIC = 1,
@@ -40,306 +49,323 @@ enum KYCLevel {
   ACCREDITED = 4,
 }
 
-const KYCLevelNames = ["NONE", "BASIC", "INTERMEDIATE", "ADVANCED", "ACCREDITED"];
-
-// Load ABI
-function loadABI(name: string): any {
-  // Try AVS abis folder first
-  const abiPath = path.join(__dirname, "..", "abis", `${name}.json`);
-  if (fs.existsSync(abiPath)) {
-    return JSON.parse(fs.readFileSync(abiPath, "utf8"));
-  }
-
-  // Fallback: Try contracts out folder
-  const contractsPath = path.join(
-    __dirname,
-    "..",
-    "contracts",
-    "out",
-    `${name}.sol`,
-    `${name}.json`
-  );
-  if (fs.existsSync(contractsPath)) {
-    const artifact = JSON.parse(fs.readFileSync(contractsPath, "utf8"));
-    return artifact.abi;
-  }
-
-  // Minimal ABI if files don't exist
-  console.warn(`ABI file not found for ${name}, using minimal ABI`);
-  return [
-    "event KYCTaskCreated(uint32 indexed taskId, address indexed user, uint8 requiredLevel, bytes32 requestId)",
-    "function respondToKYCTask(uint32 taskId, uint8 achievedLevel, string ipfsHash, bytes signature) external",
-    "function isOperator(address operator) external view returns (bool)",
-    "function getTask(uint32 taskId) external view returns (tuple(address user, uint8 requiredLevel, uint32 taskCreatedBlock, uint8 status, bytes32 requestId))",
-  ];
+enum VerificationStatus {
+  PENDING = 0,
+  BASIC = 1,
+  STANDARD = 2,
+  PREMIUM = 3,
+  REJECTED = 4,
 }
 
-// Mock KYC verification
-async function verifyKYC(
-  userAddress: string,
-  requiredLevel: KYCLevel
-): Promise<{ verified: boolean; achievedLevel: KYCLevel; proofData: any }> {
+const KYCLevelNames = ["NONE", "BASIC", "INTERMEDIATE", "ADVANCED", "ACCREDITED"];
+const VerificationStatusNames = ["PENDING", "BASIC", "STANDARD", "PREMIUM", "REJECTED"];
+const CategoryNames = ["FOREST", "OCEAN", "ENERGY", "WASTE", "COMMUNITY", "TECH"];
+
+// ============ ABIs ============
+
+const KYC_ABI = [
+  "event NewTaskCreated(uint32 indexed taskId, tuple(address user, uint8 requiredLevel, uint32 taskCreatedBlock, uint8 status) task)",
+  "function respondToTask(uint32 taskId, uint8 achievedLevel, bytes signature) external",
+  "function isOperator(address operator) external view returns (bool)",
+  "function getTask(uint32 taskId) external view returns (tuple(address user, uint8 requiredLevel, uint32 taskCreatedBlock, uint8 status))",
+  "function operators(address) external view returns (bool)",
+];
+
+const PROJECT_ABI = [
+  "event ProjectSubmitted(uint32 indexed taskId, address indexed owner, string name, uint8 category, uint16 vintage, string registryId)",
+  "function respondToTask(uint32 taskId, uint8 status, uint8 qualityScore, uint256 verifiedCredits, string verificationUri, bytes signature) external",
+  "function isOperator(address operator) external view returns (bool)",
+  "function getSubmission(uint32 taskId) external view returns (tuple(address owner, string name, string methodology, string registry, string registryId, string location, uint8 category, uint16 vintage, uint256 estimatedCredits, string documentationUri, uint32 submittedBlock, uint8 status))",
+  "function operators(address) external view returns (bool)",
+];
+
+// ============ KYC Verification ============
+
+async function verifyKYC(userAddress: string, requiredLevel: KYCLevel): Promise<{ verified: boolean; achievedLevel: KYCLevel }> {
   console.log(`\n[KYC] Verifying user: ${userAddress}`);
   console.log(`[KYC] Required level: ${KYCLevelNames[requiredLevel]}`);
 
-  // For hackathon demo: always approve at requested level
-  // In production, this would integrate with actual KYC providers
+  // Mock verification - always approve for hackathon
+  await new Promise((resolve) => setTimeout(resolve, 1000));
 
-  // Simulate verification delay
-  await new Promise((resolve) => setTimeout(resolve, 2000));
-
-  // Mock proof data
-  const proofData = {
-    timestamp: Date.now(),
-    provider: "CarbonX Mock KYC",
-    level: KYCLevelNames[requiredLevel],
-    user: userAddress,
-    verified: true,
-    documents: ["id_verification", "address_proof"],
-  };
-
-  console.log(`[KYC] Verification complete: APPROVED at ${KYCLevelNames[requiredLevel]}`);
-
-  return {
-    verified: true,
-    achievedLevel: requiredLevel,
-    proofData,
-  };
+  console.log(`[KYC] Result: APPROVED at ${KYCLevelNames[requiredLevel]}`);
+  return { verified: true, achievedLevel: requiredLevel };
 }
 
-// Mock IPFS upload
-async function uploadToIPFS(data: any): Promise<string> {
-  // For hackathon demo: return mock IPFS hash
-  // In production, this would use Pinata or similar
-  const mockHash = `Qm${Buffer.from(JSON.stringify(data)).toString("base64").slice(0, 44)}`;
-  console.log(`[IPFS] Uploaded proof: ${mockHash}`);
-  return mockHash;
-}
-
-// Create signed response
-async function signResponse(
-  wallet: ethers.Wallet,
-  taskId: number,
-  userAddress: string,
-  achievedLevel: KYCLevel,
-  ipfsHash: string,
-  contractAddress: string
-): Promise<string> {
-  const messageHash = ethers.solidityPackedKeccak256(
-    ["uint32", "address", "uint8", "string", "address"],
-    [taskId, userAddress, achievedLevel, ipfsHash, contractAddress]
-  );
-
-  return await wallet.signMessage(ethers.getBytes(messageHash));
-}
-
-// Process a single task
-async function processTask(
-  serviceManager: ethers.Contract,
+async function processKYCTask(
+  contract: ethers.Contract,
   wallet: ethers.Wallet,
   taskId: number,
   task: KYCTask
 ): Promise<void> {
-  console.log("=================================================");
-  console.log(`[Task ${taskId}] Processing KYC verification task`);
-  console.log(`[Task ${taskId}] User: ${task.user}`);
-  console.log(`[Task ${taskId}] Required Level: ${KYCLevelNames[task.requiredLevel]}`);
-  console.log(`[Task ${taskId}] Request ID: ${task.requestId}`);
+  console.log("\n=================================================");
+  console.log(`[KYC Task ${taskId}] Processing...`);
+  console.log(`  User: ${task.user}`);
+  console.log(`  Level: ${KYCLevelNames[task.requiredLevel]}`);
 
   try {
-    // Perform mock verification
     const result = await verifyKYC(task.user, task.requiredLevel);
 
     if (result.verified) {
-      // Upload proof to IPFS
-      const ipfsHash = await uploadToIPFS(result.proofData);
-
-      // Sign the response
-      const signature = await signResponse(
-        wallet,
-        taskId,
-        task.user,
-        result.achievedLevel,
-        ipfsHash,
-        await serviceManager.getAddress()
+      // Sign response
+      const messageHash = ethers.solidityPackedKeccak256(
+        ["uint32", "address", "uint8", "address"],
+        [taskId, task.user, result.achievedLevel, await contract.getAddress()]
       );
+      const signature = await wallet.signMessage(ethers.getBytes(messageHash));
 
-      console.log(`[Task ${taskId}] Submitting response...`);
-
-      // Submit response to contract
-      const tx = await serviceManager.respondToKYCTask(
-        taskId,
-        result.achievedLevel,
-        ipfsHash,
-        signature
-      );
-
+      console.log(`[KYC Task ${taskId}] Submitting response...`);
+      const tx = await contract.respondToTask(taskId, result.achievedLevel, signature);
       const receipt = await tx.wait();
-      console.log(`[Task ${taskId}] Response submitted!`);
-      console.log(`[Task ${taskId}] TX Hash: ${receipt.hash}`);
-    } else {
-      console.log(`[Task ${taskId}] Verification failed, not responding`);
+      console.log(`[KYC Task ${taskId}] SUCCESS! TX: ${receipt.hash}`);
     }
-  } catch (error) {
-    console.error(`[Task ${taskId}] Error:`, error);
+  } catch (error: any) {
+    console.error(`[KYC Task ${taskId}] Error:`, error.message);
   }
-
   console.log("=================================================\n");
 }
 
-// Monitor for new tasks using polling
-async function monitorTasks(
-  serviceManager: ethers.Contract,
+// ============ Project Verification ============
+
+async function verifyProject(submission: ProjectSubmission): Promise<{
+  verified: boolean;
+  status: VerificationStatus;
+  qualityScore: number;
+  verifiedCredits: bigint;
+}> {
+  console.log(`\n[Project] Verifying: ${submission.name}`);
+  console.log(`  Category: ${CategoryNames[submission.category]}`);
+  console.log(`  Registry: ${submission.registry} (${submission.registryId})`);
+  console.log(`  Location: ${submission.location}`);
+  console.log(`  Vintage: ${submission.vintage}`);
+  console.log(`  Estimated Credits: ${ethers.formatEther(submission.estimatedCredits)} tonnes`);
+
+  // Mock verification - always approve for hackathon
+  await new Promise((resolve) => setTimeout(resolve, 2000));
+
+  // Generate quality score (85-100 for demo)
+  const qualityScore = 85 + Math.floor(Math.random() * 16);
+
+  // Verify 90-100% of estimated credits
+  const verificationRate = 0.9 + Math.random() * 0.1;
+  const verifiedCredits = BigInt(Math.floor(Number(submission.estimatedCredits) * verificationRate));
+
+  console.log(`[Project] Result: APPROVED`);
+  console.log(`  Quality Score: ${qualityScore}`);
+  console.log(`  Verified Credits: ${ethers.formatEther(verifiedCredits)} tonnes`);
+
+  return {
+    verified: true,
+    status: VerificationStatus.STANDARD, // Standard verification for demo
+    qualityScore,
+    verifiedCredits,
+  };
+}
+
+async function processProjectTask(
+  contract: ethers.Contract,
   wallet: ethers.Wallet,
-  processedTasks: Set<number>
+  taskId: number,
+  submission: ProjectSubmission
 ): Promise<void> {
-  console.log(`[Monitor] Polling for KYCTaskCreated events...`);
+  console.log("\n=================================================");
+  console.log(`[Project Task ${taskId}] Processing...`);
+  console.log(`  Project: ${submission.name}`);
+  console.log(`  Owner: ${submission.owner}`);
 
-  // Get current block
-  const provider = wallet.provider!;
-  let lastCheckedBlock = await provider.getBlockNumber();
+  try {
+    const result = await verifyProject(submission);
 
-  // Polling interval (10 seconds)
+    if (result.verified) {
+      // Mock verification URI
+      const verificationUri = `ipfs://Qm${Buffer.from(submission.name).toString("base64").slice(0, 40)}`;
+
+      // Sign response
+      const messageHash = ethers.solidityPackedKeccak256(
+        ["uint32", "address", "uint8", "uint8", "uint256", "address"],
+        [taskId, submission.owner, result.status, result.qualityScore, result.verifiedCredits, await contract.getAddress()]
+      );
+      const signature = await wallet.signMessage(ethers.getBytes(messageHash));
+
+      console.log(`[Project Task ${taskId}] Submitting response...`);
+      const tx = await contract.respondToTask(
+        taskId,
+        result.status,
+        result.qualityScore,
+        result.verifiedCredits,
+        verificationUri,
+        signature
+      );
+      const receipt = await tx.wait();
+      console.log(`[Project Task ${taskId}] SUCCESS! TX: ${receipt.hash}`);
+    }
+  } catch (error: any) {
+    console.error(`[Project Task ${taskId}] Error:`, error.message);
+  }
+  console.log("=================================================\n");
+}
+
+// ============ Monitoring ============
+
+async function monitorKYC(
+  contract: ethers.Contract,
+  wallet: ethers.Wallet,
+  processedTasks: Set<string>,
+  provider: ethers.JsonRpcProvider
+): Promise<void> {
+  let lastBlock = await provider.getBlockNumber();
   const POLL_INTERVAL = 10000;
-  const BLOCK_RANGE = 100;
 
   setInterval(async () => {
     try {
       const currentBlock = await provider.getBlockNumber();
+      if (currentBlock <= lastBlock) return;
 
-      if (currentBlock > lastCheckedBlock) {
-        const fromBlock = lastCheckedBlock + 1;
-        const toBlock = Math.min(fromBlock + BLOCK_RANGE, currentBlock);
+      const filter = contract.filters.NewTaskCreated();
+      const events = await contract.queryFilter(filter, lastBlock + 1, currentBlock);
 
-        // Query events
-        const filter = serviceManager.filters.KYCTaskCreated();
-        const events = await serviceManager.queryFilter(filter, fromBlock, toBlock);
+      for (const event of events) {
+        const parsedEvent = event as ethers.EventLog;
+        const taskId = Number(parsedEvent.args[0]);
+        const key = `kyc-${taskId}`;
 
-        for (const event of events) {
-          const parsedEvent = event as ethers.EventLog;
-          const taskId = Number(parsedEvent.args[0]);
-
-          if (!processedTasks.has(taskId)) {
-            processedTasks.add(taskId);
-
-            // Fetch task details
-            const task = await serviceManager.getTask(taskId);
-
-            await processTask(serviceManager, wallet, taskId, {
-              user: task.user,
-              requiredLevel: Number(task.requiredLevel),
-              taskCreatedBlock: Number(task.taskCreatedBlock),
-              status: Number(task.status),
-              requestId: task.requestId,
-            });
-          }
+        if (!processedTasks.has(key)) {
+          processedTasks.add(key);
+          const task = await contract.getTask(taskId);
+          await processKYCTask(contract, wallet, taskId, {
+            user: task.user,
+            requiredLevel: Number(task.requiredLevel),
+            taskCreatedBlock: Number(task.taskCreatedBlock),
+            status: Number(task.status),
+          });
         }
-
-        lastCheckedBlock = toBlock;
       }
-    } catch (error) {
-      console.error("[Monitor] Error polling events:", error);
+
+      lastBlock = currentBlock;
+    } catch (error: any) {
+      if (!error.message.includes("eth_newFilter")) {
+        console.error("[KYC Monitor] Error:", error.message);
+      }
     }
   }, POLL_INTERVAL);
 }
 
-// Main operator loop
+async function monitorProjects(
+  contract: ethers.Contract,
+  wallet: ethers.Wallet,
+  processedTasks: Set<string>,
+  provider: ethers.JsonRpcProvider
+): Promise<void> {
+  let lastBlock = await provider.getBlockNumber();
+  const POLL_INTERVAL = 10000;
+
+  setInterval(async () => {
+    try {
+      const currentBlock = await provider.getBlockNumber();
+      if (currentBlock <= lastBlock) return;
+
+      const filter = contract.filters.ProjectSubmitted();
+      const events = await contract.queryFilter(filter, lastBlock + 1, currentBlock);
+
+      for (const event of events) {
+        const parsedEvent = event as ethers.EventLog;
+        const taskId = Number(parsedEvent.args[0]);
+        const key = `project-${taskId}`;
+
+        if (!processedTasks.has(key)) {
+          processedTasks.add(key);
+          const submission = await contract.getSubmission(taskId);
+          await processProjectTask(contract, wallet, taskId, {
+            owner: submission.owner,
+            name: submission.name,
+            methodology: submission.methodology,
+            registry: submission.registry,
+            registryId: submission.registryId,
+            location: submission.location,
+            category: Number(submission.category),
+            vintage: Number(submission.vintage),
+            estimatedCredits: submission.estimatedCredits,
+            documentationUri: submission.documentationUri,
+            submittedBlock: Number(submission.submittedBlock),
+            status: Number(submission.status),
+          });
+        }
+      }
+
+      lastBlock = currentBlock;
+    } catch (error: any) {
+      if (!error.message.includes("eth_newFilter")) {
+        console.error("[Project Monitor] Error:", error.message);
+      }
+    }
+  }, POLL_INTERVAL);
+}
+
+// ============ Main ============
+
 async function main() {
   console.log("=================================================");
-  console.log("CarbonX KYC Operator Service");
-  console.log("EigenLayer AVS Pattern");
+  console.log("CarbonX AVS Operator Service");
+  console.log("Handles: KYC + Project Verification");
   console.log("=================================================\n");
 
-  // Load configuration
+  // Load config
   const privateKey = process.env.OPERATOR_PRIVATE_KEY;
   const rpcUrl = process.env.RPC_URL || "https://rpc.sepolia.mantle.xyz";
-  const serviceManagerAddress = process.env.SERVICE_MANAGER_ADDRESS;
+  const kycAddress = process.env.SERVICE_MANAGER_ADDRESS || "0xbDe5421D508C781c401E2af2101D74A23E39cBd6";
+  const projectAddress = process.env.PROJECT_VERIFICATION_ADDRESS || "0x0A762a19e9b64caC0149EDbe2DE6D5c0165001Fe";
 
   if (!privateKey) {
-    console.error("Error: OPERATOR_PRIVATE_KEY not set in .env");
+    console.error("Error: OPERATOR_PRIVATE_KEY not set");
     process.exit(1);
   }
 
-  if (!serviceManagerAddress) {
-    console.error("Error: SERVICE_MANAGER_ADDRESS not set in .env");
-    process.exit(1);
-  }
-
-  // Setup provider and wallet
+  // Setup
   const provider = new ethers.JsonRpcProvider(rpcUrl);
   const wallet = new ethers.Wallet(privateKey, provider);
 
-  console.log(`[Config] RPC URL: ${rpcUrl}`);
+  console.log(`[Config] RPC: ${rpcUrl}`);
   console.log(`[Config] Operator: ${wallet.address}`);
-  console.log(`[Config] Service Manager: ${serviceManagerAddress}`);
+  console.log(`[Config] KYC Contract: ${kycAddress}`);
+  console.log(`[Config] Project Contract: ${projectAddress}`);
 
-  // Load contract
-  const abi = loadABI("CarbonXServiceManager");
-  const serviceManager = new ethers.Contract(serviceManagerAddress, abi, wallet);
+  // Contracts
+  const kycContract = new ethers.Contract(kycAddress, KYC_ABI, wallet);
+  const projectContract = new ethers.Contract(projectAddress, PROJECT_ABI, wallet);
 
-  // Check if registered as operator
+  // Check operator status
   try {
-    const isOperator = await serviceManager.isOperator(wallet.address);
-    if (!isOperator) {
-      console.log("\n[Warning] Not registered as operator in ServiceManager");
-      console.log("[Warning] Please register through EigenLayer before responding to tasks");
-    } else {
-      console.log("\n[Setup] Registered as operator");
-    }
+    const isKYCOperator = await kycContract.operators(wallet.address);
+    const isProjectOperator = await projectContract.operators(wallet.address);
+    console.log(`\n[Status] KYC Operator: ${isKYCOperator ? "YES" : "NO"}`);
+    console.log(`[Status] Project Operator: ${isProjectOperator ? "YES" : "NO"}`);
   } catch (error) {
-    console.log("[Setup] Could not check operator status (may be using simplified deployment)");
+    console.log("[Status] Could not check operator status");
   }
 
   // Track processed tasks
-  const processedTasks = new Set<number>();
+  const processedTasks = new Set<string>();
 
   // Start monitoring
-  console.log("\n[Operator] Starting task monitor...");
-  console.log("[Operator] Listening for KYCTaskCreated events...\n");
+  console.log("\n[Operator] Starting monitors...");
+  console.log("[Operator] Listening for NewTaskCreated (KYC)...");
+  console.log("[Operator] Listening for ProjectSubmitted (RWA)...\n");
 
-  // Start polling
-  await monitorTasks(serviceManager, wallet, processedTasks);
+  await monitorKYC(kycContract, wallet, processedTasks, provider);
+  await monitorProjects(projectContract, wallet, processedTasks, provider);
 
-  // Also listen for real-time events if supported
-  try {
-    serviceManager.on("KYCTaskCreated", async (taskId: bigint, user: string, level: number) => {
-      const taskIdNum = Number(taskId);
+  console.log("[Operator] Service running. Press Ctrl+C to stop.\n");
 
-      if (processedTasks.has(taskIdNum)) {
-        return;
-      }
-
-      processedTasks.add(taskIdNum);
-      const task = await serviceManager.getTask(taskIdNum);
-
-      await processTask(serviceManager, wallet, taskIdNum, {
-        user: task.user,
-        requiredLevel: Number(task.requiredLevel),
-        taskCreatedBlock: Number(task.taskCreatedBlock),
-        status: Number(task.status),
-        requestId: task.requestId,
-      });
-    });
-  } catch (error) {
-    console.log("[Info] Real-time events not supported, using polling only");
-  }
-
-  console.log("[Operator] Service is running. Press Ctrl+C to stop.\n");
-
-  // Handle graceful shutdown
+  // Keep alive
   process.on("SIGINT", () => {
     console.log("\n[Operator] Shutting down...");
     process.exit(0);
   });
 
-  // Keep process alive
   await new Promise(() => {});
 }
 
-// Run the operator
 main().catch((error) => {
   console.error("Fatal error:", error);
   process.exit(1);
 });
-
-export { verifyKYC, uploadToIPFS, signResponse, processTask };
